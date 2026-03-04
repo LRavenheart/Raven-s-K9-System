@@ -38,8 +38,41 @@ end
 function RK9_OpenMainMenu()
     local isEval  = lib.callback.await('rk9:cb:isEvaluator', false)
     local isAdmin = lib.callback.await('rk9:cb:isAdmin',     false)
+    local isK9    = exports['ravens_k9']:RK9_IsK9Unit()
+    local isHandler = exports['ravens_k9']:RK9_IsHandler()
+    local canView = exports['ravens_k9']:RK9_CanViewDogCerts()
+
+    local certSummary = {}
+    local activeCount = 0
+    for _, cert in ipairs(exports['ravens_k9']:RK9_GetMyCerts()) do
+        if not RK9Certs.IsExpired(cert.expires_at) then
+            activeCount = activeCount + 1
+            certSummary[#certSummary + 1] = RK9Certs.GetLabel(cert.cert_type)
+        end
+    end
+
+    local roleLabel = isK9 and 'K9 Player' or (isHandler and 'Handler' or 'LEO')
+    if isAdmin then
+        roleLabel = roleLabel .. ' + Admin'
+    elseif isEval then
+        roleLabel = roleLabel .. ' + Evaluator'
+    end
+
+    local certText = #certSummary > 0 and table.concat(certSummary, ', ') or 'None'
 
     local opts = {
+        {
+            title       = '🧭  Operations Console Status',
+            description = string.format('Role: %s  |  Active certs: %d', roleLabel, activeCount),
+            metadata    = {
+                { label = 'K9 Unit', value = isK9 and 'Yes' or 'No' },
+                { label = 'Handler', value = isHandler and 'Yes' or 'No' },
+                { label = 'Can View Certs', value = canView and 'Yes' or 'No' },
+                { label = 'Active Certifications', value = certText },
+            },
+            -- status card only; intentionally non-interactive
+            disabled    = true,
+        },
         {
             title       = '🎖️  My Certifications',
             description = 'View your K9 certification cards and statuses.',
@@ -48,16 +81,19 @@ function RK9_OpenMainMenu()
         {
             title       = '🔍  K9 Sniff — Person',
             description = 'Command the K9 to sniff a nearby person.',
+            disabled    = not isK9,
             onSelect    = function() TriggerEvent('rk9:cl:doSniffPed') end,
         },
         {
             title       = '🚗  K9 Sniff — Vehicle',
             description = 'Command the K9 to sniff a nearby vehicle.',
+            disabled    = not isK9,
             onSelect    = function() TriggerEvent('rk9:cl:doSniffVehicle') end,
         },
         {
             title       = '👣  Human Tracking',
             description = 'Track nearby or fleeing suspects (humantrack cert). Missing Person search requires Search and Rescue cert.',
+            disabled    = not isK9,
             onSelect    = function()
                 if not exports['ravens_k9']:RK9_HasActiveCert('humantrack') then
                     RK9_Notify('Human Tracking certification required.', 'error')
@@ -69,6 +105,7 @@ function RK9_OpenMainMenu()
         {
             title       = '📋  View Nearby K9 Certs',
             description = 'View the certifications of a nearby handler.',
+            disabled    = not canView,
             onSelect    = function()
                 local nearby = RK9_GetNearbyPlayers()
                 if #nearby == 0 then

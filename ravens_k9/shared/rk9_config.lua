@@ -19,6 +19,18 @@ RK9Config.AllowedJobs = {
 -- ─── QBCore permission groups that count as "admin" ─────────
 RK9Config.AdminGroups = { 'admin', 'superadmin', 'god' }
 
+-- ─── Optional MDT integration (ps-mdt) ───────────────────────
+--  When enabled and ps-mdt is started, RK9 can push K9 alerts/calls
+--  for positive sniffs and tracking activity.
+--  This integration is optional and fail-safe.
+RK9Config.PsMdtIntegration = true
+RK9Config.PsMdtCallSign = 'K9'
+
+-- ─── K9 roleplay gating ──────────────────────────────────────
+--  When enabled, core K9 actions (sniffing + tracking) require an
+--  active Patrol certification in addition to job/role checks.
+RK9Config.RequirePatrolCertForK9Actions = true
+
 -- ─── Certification types ─────────────────────────────────────
 --
 --  Each entry requires:
@@ -33,6 +45,12 @@ RK9Config.AdminGroups = { 'admin', 'superadmin', 'god' }
 --                 also be held, as SAR builds on the base tracking skillset
 --
 RK9Config.CertTypes = {
+    {
+        id    = 'handler',
+        label = 'Handler Certification',
+        desc  = 'Authorises handler-level K9 paperwork checks (view certifications only).',
+        color = '#95a5a6',
+    },
     {
         id    = 'patrol',
         label = 'Patrol Certification',
@@ -73,7 +91,7 @@ RK9Config.CertTypes = {
 
 -- ─── Items detectable per cert type ─────────────────────────
 --  Use exact QBCore item names. Add/remove freely.
---  patrol, humantrack, and sar use behaviour logic — no item detection.
+--  handler, patrol, humantrack, and sar use behaviour logic — no item detection.
 RK9Config.DetectableItems = {
     firearms = {
         'weapon_pistol', 'weapon_combatpistol', 'weapon_heavypistol',
@@ -93,6 +111,7 @@ RK9Config.DetectableItems = {
         'weapon_molotov', 'weapon_stickybomb', 'weapon_proximitymine',
         'c4', 'explosive', 'detonator',
     },
+    handler    = {},
     -- Behaviour-only certs — no item scanning required
     patrol     = {},
     humantrack = {},

@@ -73,6 +73,13 @@ end
 
 -- cache of evaluator citizenids to avoid repeated queries
 local evaluatorCache = {}
+-- pending tracking requests keyed by responderSrc -> requesterSrc.
+-- Each entry is short-lived and validated in `trackCoordsResponse` to
+-- ensure clients can only reply to a recent server-issued request.
+local pendingTrackRequests = {}
+-- lightweight server-side cooldown for `rk9:sv:trackHuman` requests
+-- keyed by requester source to reduce spam load.
+local trackRequestCooldowns = {}
 
 local function refreshEvaluatorCache()
     evaluatorCache = {}
@@ -101,7 +108,39 @@ local function RK9_IsEvaluator(src)
     return isEv
 end
 
+local function RK9_HasActiveCert(citizenid, certType)
+    if not citizenid or not certType then return false end
+    local row = MySQL.single.await([[
+        SELECT id
+        FROM ravens_k9_certs
+        WHERE citizenid = ?
+          AND cert_type = ?
+          AND expires_at > ?
+        LIMIT 1
+    ]], { citizenid, certType, os.time() })
+    return row ~= nil
+end
+
+local function RK9_IsK9Unit(src)
+    if not RK9_IsLEO(src) then return false end
+    if RK9Config.RequirePatrolCertForK9Actions then
+        return RK9_HasActiveCert(RK9_GetCitizenId(src), 'patrol')
+    end
+    return true
+end
+
+local function RK9_IsHandler(src)
+    return RK9_IsLEO(src) and RK9_HasActiveCert(RK9_GetCitizenId(src), 'handler')
+end
+
+local function RK9_CanViewDogCerts(src)
+    return RK9_IsK9Unit(src) or RK9_IsHandler(src)
+end
+
 exports('RK9_IsLEO',         RK9_IsLEO)
+exports('RK9_IsK9Unit',      RK9_IsK9Unit)
+exports('RK9_IsHandler',     RK9_IsHandler)
+exports('RK9_CanViewDogCerts', RK9_CanViewDogCerts)
 exports('RK9_IsAdmin',       RK9_IsAdmin)
 exports('RK9_IsEvaluator',   RK9_IsEvaluator)
 exports('RK9_GetCitizenId',  RK9_GetCitizenId)
@@ -111,6 +150,26 @@ exports('RK9_GetPlayerData', RK9_GetPlayerData)
 
 local function RK9_Notify(src, msg, ntype)
     TriggerClientEvent('rk9:cl:notify', src, msg, ntype or 'inform')
+end
+
+local function RK9_SendMdtCall(src, title, message, code)
+    if not RK9Config.PsMdtIntegration then return end
+    if GetResourceState('ps-mdt') ~= 'started' then return end
+
+    local ped = GetPlayerPed(src)
+    local coords = ped and ped > 0 and GetEntityCoords(ped) or vector3(0.0, 0.0, 0.0)
+    local payload = {
+        title = title,
+        message = message,
+        code = code or 'K9',
+        coords = { x = coords.x, y = coords.y, z = coords.z },
+        callsign = RK9Config.PsMdtCallSign or 'K9',
+    }
+
+    -- Support common ps-mdt integrations; calls are best-effort only.
+    -- Any integration failure should never interrupt core K9 gameplay.
+    pcall(function() exports['ps-mdt']:CreateCall(payload) end)
+    pcall(function() TriggerEvent('ps-mdt:server:CreateCall', payload) end)
 end
 
 -- ═══════════════════════════════════════════════════════════════
@@ -129,7 +188,10 @@ end)
 
 RegisterNetEvent('rk9:sv:requestTargetCerts', function(targetServerId)
     local src = source
-    if not RK9_IsLEO(src) then return end
+    if not RK9_CanViewDogCerts(src) then
+        RK9_Notify(src, 'You must be an active K9 unit or certified Handler to view certs.', 'error')
+        return
+    end
     local targetPlayer = QBCore.Functions.GetPlayer(targetServerId)
     if not targetPlayer then
         RK9_Notify(src, 'Player not found.', 'error') return
@@ -227,18 +289,35 @@ end
 
 -- ─── Grant/revoke events by server ID (menu + target flows) ──
 
-RegisterNetEvent('rk9:sv:grantCertByServerId', function(targetServerId, certType)
-    local src = source
-    local tp  = QBCore.Functions.GetPlayer(targetServerId)
-    if not tp then RK9_Notify(src, 'Player not found.', 'error') return end
+local function RK9_GrantCertByServerId(actorSrc, targetServerId, certType)
+    local src = tonumber(actorSrc)
+    local tp  = QBCore.Functions.GetPlayer(tonumber(targetServerId))
+    if not src or not tp then
+        if src then RK9_Notify(src, 'Player not found.', 'error') end
+        return
+    end
     RK9_DoGrantCert(src, tp.PlayerData.citizenid, certType)
+end
+
+local function RK9_RevokeCertByServerId(actorSrc, targetServerId, certType)
+    local src = tonumber(actorSrc)
+    local tp  = QBCore.Functions.GetPlayer(tonumber(targetServerId))
+    if not src or not tp then
+        if src then RK9_Notify(src, 'Player not found.', 'error') end
+        return
+    end
+    RK9_DoRevokeCert(src, tp.PlayerData.citizenid, certType)
+end
+
+exports('RK9_GrantCertByServerId', RK9_GrantCertByServerId)
+exports('RK9_RevokeCertByServerId', RK9_RevokeCertByServerId)
+
+RegisterNetEvent('rk9:sv:grantCertByServerId', function(targetServerId, certType)
+    RK9_GrantCertByServerId(source, targetServerId, certType)
 end)
 
 RegisterNetEvent('rk9:sv:revokeCertByServerId', function(targetServerId, certType)
-    local src = source
-    local tp  = QBCore.Functions.GetPlayer(targetServerId)
-    if not tp then RK9_Notify(src, 'Player not found.', 'error') return end
-    RK9_DoRevokeCert(src, tp.PlayerData.citizenid, certType)
+    RK9_RevokeCertByServerId(source, targetServerId, certType)
 end)
 
 -- ─── Grant/revoke events by citizenid (chat commands) ─────────
@@ -257,7 +336,10 @@ end)
 
 RegisterNetEvent('rk9:sv:sniffPed', function(targetServerId, certTypes)
     local src          = source
-    if not RK9_IsLEO(src) then return end
+    if not RK9_IsK9Unit(src) then
+        RK9_Notify(src, 'You must be the active K9 unit to perform a sniff.', 'error')
+        return
+    end
     local targetPlayer = QBCore.Functions.GetPlayer(targetServerId)
     if not targetPlayer then
         TriggerClientEvent('rk9:cl:sniffResult', src, false, {}) return
@@ -276,11 +358,21 @@ RegisterNetEvent('rk9:sv:sniffPed', function(targetServerId, certTypes)
     end
 
     TriggerClientEvent('rk9:cl:sniffResult', src, #found > 0, found)
+    if #found > 0 then
+        local targetCid = targetPlayer.PlayerData.citizenid or 'unknown'
+        RK9_SendMdtCall(src, 'K9 Positive Sniff (Person)',
+            string.format('Positive indication on subject CID: %s (%d item matches).', targetCid, #found),
+            'K9-ALERT'
+        )
+    end
 end)
 
 RegisterNetEvent('rk9:sv:sniffVehicle', function(vehiclePlate, certTypes)
     local src   = source
-    if not RK9_IsLEO(src) then return end
+    if not RK9_IsK9Unit(src) then
+        RK9_Notify(src, 'You must be the active K9 unit to perform a sniff.', 'error')
+        return
+    end
     local found = {}
 
     for _, playerId in ipairs(GetPlayers()) do
@@ -303,6 +395,12 @@ RegisterNetEvent('rk9:sv:sniffVehicle', function(vehiclePlate, certTypes)
     end
 
     TriggerClientEvent('rk9:cl:sniffResult', src, #found > 0, found)
+    if #found > 0 then
+        RK9_SendMdtCall(src, 'K9 Positive Sniff (Vehicle)',
+            string.format('Positive indication on vehicle plate %s (%d item matches).', tostring(vehiclePlate), #found),
+            'K9-VEH'
+        )
+    end
 end)
 
 -- ═══════════════════════════════════════════════════════════════
@@ -315,23 +413,140 @@ end)
 -- `mode` parameter is echoed back so the client can colour the blip correctly.
 RegisterNetEvent('rk9:sv:trackHuman', function(targetServerId, mode)
     local src = source
-    if not RK9_IsLEO(src) then return end
+    if not RK9_IsK9Unit(src) then
+        TriggerClientEvent('rk9:cl:notify', src, 'You must be the active K9 unit to track targets.', 'error')
+        return
+    end
+
+    local nowMs = GetGameTimer()
+    local nextAllowedAt = trackRequestCooldowns[src] or 0
+    if nowMs < nextAllowedAt then
+        return
+    end
+    trackRequestCooldowns[src] = nowMs + 250
+
+    local validModes = {
+        nearby = true,
+        fleeing = true,
+        missing = true,
+    }
+    mode = validModes[mode] and mode or 'nearby'
+
+    local requesterCid = RK9_GetCitizenId(src)
+    if not RK9_HasActiveCert(requesterCid, 'humantrack') then
+        TriggerClientEvent('rk9:cl:notify', src, 'Human Tracking certification required.', 'error')
+        return
+    end
+    if mode == 'missing' and not RK9_HasActiveCert(requesterCid, 'sar') then
+        TriggerClientEvent('rk9:cl:notify', src, 'Search and Rescue certification required for Missing Person mode.', 'error')
+        return
+    end
+
     local tgt = tonumber(targetServerId)
     local tp  = QBCore.Functions.GetPlayer(tgt)
     if not tp then
         TriggerClientEvent('rk9:cl:notify', src, 'Could not locate tracking target.', 'error')
         return
     end
+
+    if mode ~= 'missing' then
+        local reqPed = GetPlayerPed(src)
+        local tgtPed = GetPlayerPed(tgt)
+        if reqPed <= 0 or tgtPed <= 0 then
+            TriggerClientEvent('rk9:cl:notify', src, 'Tracking failed: unable to resolve player coordinates.', 'error')
+            return
+        end
+
+        local reqCoords = GetEntityCoords(reqPed)
+        local tgtCoords = GetEntityCoords(tgtPed)
+        if #(reqCoords - tgtCoords) > RK9Config.TrackingRadius then
+            TriggerClientEvent('rk9:cl:notify', src, 'Target is outside tracking range for this mode.', 'error')
+            return
+        end
+    end
+
+    -- Bind this request to (target -> requester) for a short validation window.
+    -- The target client can only respond successfully if this pending entry exists.
+    pendingTrackRequests[tgt] = pendingTrackRequests[tgt] or {}
+    pendingTrackRequests[tgt][src] = {
+        mode = mode,
+        expiresAt = GetGameTimer() + 5000,
+    }
+
     -- ask the target client for its coords
     TriggerClientEvent('rk9:cl:provideTrackCoords', tgt, src, mode)
 end)
 
 -- response from target client with actual coordinates
 RegisterNetEvent('rk9:sv:trackCoordsResponse', function(requesterSrc, coords, mode)
-    if not RK9_IsLEO(requesterSrc) then return end
-    if coords and coords.x then
-        TriggerClientEvent('rk9:cl:trackingUpdate', requesterSrc, coords, mode)
+    local responderSrc = source
+    local requesterId = tonumber(requesterSrc)
+    if not requesterId then return end
+    if not QBCore.Functions.GetPlayer(responderSrc) then return end
+    if not RK9_IsLEO(requesterId) then return end
+
+    local validModes = {
+        nearby = true,
+        fleeing = true,
+        missing = true,
+    }
+    if not validModes[mode] then return end
+
+    -- Validate that this response matches a recent server-issued request.
+    local pendingByResponder = pendingTrackRequests[responderSrc]
+    local pending = pendingByResponder and pendingByResponder[requesterId]
+    if not pending or pending.mode ~= mode or pending.expiresAt < GetGameTimer() then
+        return
     end
+
+    pendingByResponder[requesterId] = nil
+    if next(pendingByResponder) == nil then
+        pendingTrackRequests[responderSrc] = nil
+    end
+
+    if coords and type(coords.x) == 'number' and type(coords.y) == 'number' and type(coords.z) == 'number' then
+        TriggerClientEvent('rk9:cl:trackingUpdate', requesterId, coords, mode)
+    end
+end)
+
+RegisterNetEvent('rk9:sv:mdtTrackStatus', function(mode, status)
+    local src = source
+    if not RK9_IsK9Unit(src) then return end
+
+    local validModes = { nearby = true, fleeing = true, missing = true }
+    if not validModes[mode] then return end
+    if status ~= 'start' and status ~= 'stop' then return end
+
+    if status == 'start' then
+        RK9_SendMdtCall(src, 'K9 Tracking Started',
+            string.format('K9 unit initiated %s tracking mode.', mode),
+            'K9-TRACK'
+        )
+    else
+        RK9_SendMdtCall(src, 'K9 Tracking Ended',
+            string.format('K9 unit ended %s tracking mode.', mode),
+            'K9-TRACK'
+        )
+    end
+end)
+
+-- Cleanup short-lived request/cooldown caches when players disconnect.
+AddEventHandler('playerDropped', function()
+    local src = source
+
+    -- Remove entries where this player was the responder.
+    pendingTrackRequests[src] = nil
+
+    -- Remove entries where this player was the requester.
+    for responderSrc, requesterMap in pairs(pendingTrackRequests) do
+        requesterMap[src] = nil
+        if next(requesterMap) == nil then
+            pendingTrackRequests[responderSrc] = nil
+        end
+    end
+
+    -- Remove cooldown entry for this player.
+    trackRequestCooldowns[src] = nil
 end)
 
 -- ═══════════════════════════════════════════════════════════════

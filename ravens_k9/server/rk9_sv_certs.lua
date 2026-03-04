@@ -19,9 +19,13 @@ lib.callback.register('rk9:cb:getMyCerts', function(source)
     return rows or {}
 end)
 
---- Fetch certs for an arbitrary citizenid (evaluators viewing a handler).
+--- Fetch certs for an arbitrary citizenid.
+--- Access is limited to players who can view dog certs
+--- (active K9 unit OR Handler role).
 lib.callback.register('rk9:cb:getCertsForCid', function(source, citizenid)
-    if not exports['ravens_k9']:RK9_IsLEO(source) then return {} end
+    if not exports['ravens_k9']:RK9_CanViewDogCerts(source) then
+        return {}
+    end
     local rows = MySQL.query.await(
         'SELECT * FROM ravens_k9_certs WHERE citizenid = ?', { citizenid }
     )

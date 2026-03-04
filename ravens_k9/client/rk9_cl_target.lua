@@ -2,7 +2,8 @@
 --  Raven's K9 System  |  rk9_cl_target.lua
 --  Author: Raven
 --  ox_target global entity hooks for players and vehicles.
---  All interactions are restricted to LEO jobs via `groups`.
+--  Baseline visibility is restricted to configured LEO jobs via `groups`.
+--  Fine-grained role/cert gates are enforced via canInteract helpers.
 --  Tracking mode access:
 --    Nearby / Fleeing — humantrack cert
 --    Missing Person   — humantrack + sar certs
@@ -23,17 +24,24 @@ CreateThread(function()
             icon     = 'fas fa-dog',
             label    = '🐾 K9 Sniff Person',
             groups   = RK9Config.AllowedJobs,
+            canInteract = function(_entity)
+                return exports['ravens_k9']:RK9_IsK9Unit()
+            end,
             onSelect = function(_data)
                 TriggerEvent('rk9:cl:doSniffPed')
             end,
         },
 
-        -- View another player's K9 certs
+        -- View another player's K9 certs.
+        -- Allowed for active K9 units and Handler role users.
         {
             name     = 'rk9_target_view_certs',
             icon     = 'fas fa-id-card',
             label    = '📋 View K9 Certs',
             groups   = RK9Config.AllowedJobs,
+            canInteract = function(_entity)
+                return exports['ravens_k9']:RK9_CanViewDogCerts()
+            end,
             onSelect = function(data)
                 local targetSid = GetPlayerServerId(NetworkGetEntityOwner(data.entity))
                 TriggerServerEvent('rk9:sv:requestTargetCerts', targetSid)
@@ -74,15 +82,17 @@ CreateThread(function()
             end,
         },
 
-        -- Begin human tracking on a player (humantrack cert required).
-        -- Missing Person mode additionally requires the SAR cert.
+        -- Begin human tracking on a player.
+        -- Requires active K9 unit + humantrack cert.
+        -- Missing Person mode additionally requires SAR cert.
         {
             name        = 'rk9_target_track_human',
             icon        = 'fas fa-shoe-prints',
             label       = '👣 K9 Track Person',
             groups      = RK9Config.AllowedJobs,
             canInteract = function(_entity)
-                return exports['ravens_k9']:RK9_HasActiveCert('humantrack')
+                return exports['ravens_k9']:RK9_IsK9Unit()
+                    and exports['ravens_k9']:RK9_HasActiveCert('humantrack')
             end,
             onSelect = function(data)
                 local targetSid  = GetPlayerServerId(NetworkGetEntityOwner(data.entity))
@@ -161,6 +171,9 @@ CreateThread(function()
             icon     = 'fas fa-dog',
             label    = '🐾 K9 Sniff Vehicle',
             groups   = RK9Config.AllowedJobs,
+            canInteract = function(_entity)
+                return exports['ravens_k9']:RK9_IsK9Unit()
+            end,
             onSelect = function(_data)
                 TriggerEvent('rk9:cl:doSniffVehicle')
             end,
