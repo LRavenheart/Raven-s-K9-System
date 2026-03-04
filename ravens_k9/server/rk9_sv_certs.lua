@@ -21,7 +21,8 @@ end)
 
 --- Fetch certs for an arbitrary citizenid (active K9 unit or Handler role).
 lib.callback.register('rk9:cb:getCertsForCid', function(source, citizenid)
-    if not exports['ravens_k9']:RK9_CanViewDogCerts(source) then
+    if not exports['ravens_k9']:RK9_IsLEO(source) then return {} end
+    if not (exports['ravens_k9']:RK9_IsK9Unit(source) or exports['ravens_k9']:RK9_IsHandler(source)) then
         return {}
     end
     local rows = MySQL.query.await(
