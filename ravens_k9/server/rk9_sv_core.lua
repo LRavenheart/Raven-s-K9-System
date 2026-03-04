@@ -101,6 +101,19 @@ local function RK9_IsEvaluator(src)
     return isEv
 end
 
+local function RK9_HasActiveCert(citizenid, certType)
+    if not citizenid or not certType then return false end
+    local row = MySQL.single.await([[
+        SELECT id
+        FROM ravens_k9_certs
+        WHERE citizenid = ?
+          AND cert_type = ?
+          AND expires_at > ?
+        LIMIT 1
+    ]], { citizenid, certType, os.time() })
+    return row ~= nil
+end
+
 exports('RK9_IsLEO',         RK9_IsLEO)
 exports('RK9_IsAdmin',       RK9_IsAdmin)
 exports('RK9_IsEvaluator',   RK9_IsEvaluator)
@@ -227,15 +240,15 @@ end
 
 -- ─── Grant/revoke events by server ID (menu + target flows) ──
 
-RegisterNetEvent('rk9:sv:grantCertByServerId', function(targetServerId, certType)
-    local src = source
+RegisterNetEvent('rk9:sv:grantCertByServerId', function(targetServerId, certType, actorSrc)
+    local src = tonumber(actorSrc) or source
     local tp  = QBCore.Functions.GetPlayer(targetServerId)
     if not tp then RK9_Notify(src, 'Player not found.', 'error') return end
     RK9_DoGrantCert(src, tp.PlayerData.citizenid, certType)
 end)
 
-RegisterNetEvent('rk9:sv:revokeCertByServerId', function(targetServerId, certType)
-    local src = source
+RegisterNetEvent('rk9:sv:revokeCertByServerId', function(targetServerId, certType, actorSrc)
+    local src = tonumber(actorSrc) or source
     local tp  = QBCore.Functions.GetPlayer(targetServerId)
     if not tp then RK9_Notify(src, 'Player not found.', 'error') return end
     RK9_DoRevokeCert(src, tp.PlayerData.citizenid, certType)
@@ -316,21 +329,68 @@ end)
 RegisterNetEvent('rk9:sv:trackHuman', function(targetServerId, mode)
     local src = source
     if not RK9_IsLEO(src) then return end
+
+    local validModes = {
+        nearby = true,
+        fleeing = true,
+        missing = true,
+    }
+    mode = validModes[mode] and mode or 'nearby'
+
+    local requesterCid = RK9_GetCitizenId(src)
+    if not RK9_HasActiveCert(requesterCid, 'humantrack') then
+        TriggerClientEvent('rk9:cl:notify', src, 'Human Tracking certification required.', 'error')
+        return
+    end
+    if mode == 'missing' and not RK9_HasActiveCert(requesterCid, 'sar') then
+        TriggerClientEvent('rk9:cl:notify', src, 'Search and Rescue certification required for Missing Person mode.', 'error')
+        return
+    end
+
     local tgt = tonumber(targetServerId)
     local tp  = QBCore.Functions.GetPlayer(tgt)
     if not tp then
         TriggerClientEvent('rk9:cl:notify', src, 'Could not locate tracking target.', 'error')
         return
     end
+
+    if mode ~= 'missing' then
+        local reqPed = GetPlayerPed(src)
+        local tgtPed = GetPlayerPed(tgt)
+        if reqPed <= 0 or tgtPed <= 0 then
+            TriggerClientEvent('rk9:cl:notify', src, 'Tracking failed: unable to resolve player coordinates.', 'error')
+            return
+        end
+
+        local reqCoords = GetEntityCoords(reqPed)
+        local tgtCoords = GetEntityCoords(tgtPed)
+        if #(reqCoords - tgtCoords) > RK9Config.TrackingRadius then
+            TriggerClientEvent('rk9:cl:notify', src, 'Target is outside tracking range for this mode.', 'error')
+            return
+        end
+    end
+
     -- ask the target client for its coords
     TriggerClientEvent('rk9:cl:provideTrackCoords', tgt, src, mode)
 end)
 
 -- response from target client with actual coordinates
 RegisterNetEvent('rk9:sv:trackCoordsResponse', function(requesterSrc, coords, mode)
-    if not RK9_IsLEO(requesterSrc) then return end
+    local responderSrc = source
+    local requesterId = tonumber(requesterSrc)
+    if not requesterId then return end
+    if not QBCore.Functions.GetPlayer(responderSrc) then return end
+    if not RK9_IsLEO(requesterId) then return end
+
+    local validModes = {
+        nearby = true,
+        fleeing = true,
+        missing = true,
+    }
+    if not validModes[mode] then return end
+
     if coords and coords.x then
-        TriggerClientEvent('rk9:cl:trackingUpdate', requesterSrc, coords, mode)
+        TriggerClientEvent('rk9:cl:trackingUpdate', requesterId, coords, mode)
     end
 end)
 
