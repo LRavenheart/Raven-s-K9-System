@@ -11,60 +11,69 @@ local function RK9_Notify(src, msg, ntype)
     TriggerClientEvent('rk9:cl:notify', src, msg, ntype or 'inform')
 end
 
--- ═══════════════════════════════════════════════════════════════
---  Evaluator Management Events  (menu + target driven)
--- ═══════════════════════════════════════════════════════════════
-
-RegisterNetEvent('rk9:sv:addEvaluatorByServerId', function(targetServerId)
-    local src = source
-    if not exports['ravens_k9']:RK9_IsAdmin(src) then
-        RK9_Notify(src, 'Only admins can add evaluators.', 'error') return
+local function RK9_AddEvaluator(actorSrc, targetServerId)
+    if not exports['ravens_k9']:RK9_IsAdmin(actorSrc) then
+        RK9_Notify(actorSrc, 'Only admins can add evaluators.', 'error')
+        return false
     end
 
     local tp = QBCore.Functions.GetPlayer(targetServerId)
     if not tp then
-        RK9_Notify(src, 'Target player not found.', 'error') return
+        RK9_Notify(actorSrc, 'Target player not found.', 'error')
+        return false
     end
 
-    local pd      = tp.PlayerData
-    local cid     = pd.citizenid
-    local name    = pd.charinfo.firstname .. ' ' .. pd.charinfo.lastname
-    local adminCid = exports['ravens_k9']:RK9_GetCitizenId(src)
+    local pd       = tp.PlayerData
+    local cid      = pd.citizenid
+    local name     = pd.charinfo.firstname .. ' ' .. pd.charinfo.lastname
+    local adminCid = exports['ravens_k9']:RK9_GetCitizenId(actorSrc)
 
     MySQL.query.await([[
         INSERT IGNORE INTO ravens_k9_evaluators (citizenid, name, added_by, added_at)
         VALUES (?, ?, ?, ?)
     ]], { cid, name, adminCid, os.time() })
 
-    -- update in‑memory cache
     TriggerEvent('rk9:sv:refreshEvaluatorCache')
 
-    RK9_Notify(src, name .. ' added as K9 Evaluator.', 'success')
+    RK9_Notify(actorSrc, name .. ' added as K9 Evaluator.', 'success')
     RK9_Notify(targetServerId, 'You have been designated as a K9 Evaluator.', 'success')
     print(string.format('[Ravens K9] Admin %s added evaluator: %s (%s)', adminCid, name, cid))
-end)
 
-RegisterNetEvent('rk9:sv:removeEvaluatorByCid', function(citizenid)
-    local src = source
-    if not exports['ravens_k9']:RK9_IsAdmin(src) then
-        RK9_Notify(src, 'Only admins can remove evaluators.', 'error') return
+    return true
+end
+
+local function RK9_RemoveEvaluator(actorSrc, citizenid)
+    if not exports['ravens_k9']:RK9_IsAdmin(actorSrc) then
+        RK9_Notify(actorSrc, 'Only admins can remove evaluators.', 'error')
+        return false
     end
 
     MySQL.query.await(
         'DELETE FROM ravens_k9_evaluators WHERE citizenid = ?', { citizenid }
     )
-    -- update cache as well
     TriggerEvent('rk9:sv:refreshEvaluatorCache')
 
-    RK9_Notify(src, 'Evaluator removed (CID: ' .. citizenid .. ').', 'inform')
+    RK9_Notify(actorSrc, 'Evaluator removed (CID: ' .. citizenid .. ').', 'inform')
 
-    -- Notify the evaluator if they're online
     local targetSrc = QBCore.Functions.GetPlayerByCitizenId(citizenid)
     if targetSrc then
         RK9_Notify(targetSrc, 'Your K9 Evaluator status has been removed.', 'error')
     end
 
     print(string.format('[Ravens K9] Evaluator removed: %s', citizenid))
+    return true
+end
+
+-- ═══════════════════════════════════════════════════════════════
+--  Evaluator Management Events  (menu + target driven)
+-- ═══════════════════════════════════════════════════════════════
+
+RegisterNetEvent('rk9:sv:addEvaluatorByServerId', function(targetServerId)
+    RK9_AddEvaluator(source, targetServerId)
+end)
+
+RegisterNetEvent('rk9:sv:removeEvaluatorByCid', function(citizenid)
+    RK9_RemoveEvaluator(source, citizenid)
 end)
 
 -- ═══════════════════════════════════════════════════════════════
@@ -85,9 +94,7 @@ QBCore.Commands.Add(
         if not targetSrc then
             RK9_Notify(source, 'Invalid player ID.', 'error') return
         end
-        TriggerEvent('rk9:sv:addEvaluatorByServerId', targetSrc)
-        -- Forward with the original source context
-        -- (TriggerEvent fires from server scope; wrap properly)
+        RK9_AddEvaluator(source, targetSrc)
     end,
     'admin'
 )
@@ -108,11 +115,7 @@ QBCore.Commands.Add(
             RK9_Notify(source, 'Player not found.', 'error') return
         end
         local cid = targetPlayer.PlayerData.citizenid
-        MySQL.query.await('DELETE FROM ravens_k9_evaluators WHERE citizenid = ?', { cid })
-        -- sync in-memory cache
-        TriggerEvent('rk9:sv:refreshEvaluatorCache')
-        RK9_Notify(source, 'Evaluator removed.', 'inform')
-        RK9_Notify(targetSrc, 'Your K9 Evaluator status has been removed.', 'error')
+        RK9_RemoveEvaluator(source, cid)
     end,
     'admin'
 )
@@ -123,7 +126,7 @@ QBCore.Commands.Add(
     '[K9] Grant a K9 certification to a player',
     {
         { name = 'id',   help = 'Target player server ID' },
-        { name = 'cert', help = 'patrol | firearms | narcotics | explosives | humantrack' },
+        { name = 'cert', help = 'patrol | firearms | narcotics | explosives | humantrack | sar' },
     },
     true,
     function(source, args)
@@ -133,8 +136,7 @@ QBCore.Commands.Add(
         if not targetPlayer then
             RK9_Notify(source, 'Player not found.', 'error') return
         end
-        TriggerNetEvent('rk9:sv:grantCertByServerId', targetSrc, certType)
-        -- Re-trigger so source context is preserved via net event path
+        exports['ravens_k9']:RK9_GrantCertByServerId(source, targetSrc, certType)
     end,
     'user'
 )
@@ -145,7 +147,7 @@ QBCore.Commands.Add(
     '[K9] Revoke a K9 certification from a player',
     {
         { name = 'id',   help = 'Target player server ID' },
-        { name = 'cert', help = 'patrol | firearms | narcotics | explosives | humantrack' },
+        { name = 'cert', help = 'patrol | firearms | narcotics | explosives | humantrack | sar' },
     },
     true,
     function(source, args)
@@ -155,7 +157,7 @@ QBCore.Commands.Add(
         if not targetPlayer then
             RK9_Notify(source, 'Player not found.', 'error') return
         end
-        TriggerNetEvent('rk9:sv:revokeCertByServerId', targetSrc, certType)
+        exports['ravens_k9']:RK9_RevokeCertByServerId(source, targetSrc, certType)
     end,
     'user'
 )
