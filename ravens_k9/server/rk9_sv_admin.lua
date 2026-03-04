@@ -126,7 +126,7 @@ QBCore.Commands.Add(
     '[K9] Grant a K9 certification to a player',
     {
         { name = 'id',   help = 'Target player server ID' },
-        { name = 'cert', help = 'patrol | firearms | narcotics | explosives | humantrack' },
+        { name = 'cert', help = 'patrol | firearms | narcotics | explosives | humantrack | sar' },
     },
     true,
     function(source, args)
@@ -147,7 +147,7 @@ QBCore.Commands.Add(
     '[K9] Revoke a K9 certification from a player',
     {
         { name = 'id',   help = 'Target player server ID' },
-        { name = 'cert', help = 'patrol | firearms | narcotics | explosives | humantrack' },
+        { name = 'cert', help = 'patrol | firearms | narcotics | explosives | humantrack | sar' },
     },
     true,
     function(source, args)
