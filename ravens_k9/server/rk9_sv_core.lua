@@ -476,6 +476,25 @@ AddEventHandler('playerDropped', function()
     trackRequestCooldowns[src] = nil
 end)
 
+-- Cleanup short-lived request/cooldown caches when players disconnect.
+AddEventHandler('playerDropped', function()
+    local src = source
+
+    -- Remove entries where this player was the responder.
+    pendingTrackRequests[src] = nil
+
+    -- Remove entries where this player was the requester.
+    for responderSrc, requesterMap in pairs(pendingTrackRequests) do
+        requesterMap[src] = nil
+        if next(requesterMap) == nil then
+            pendingTrackRequests[responderSrc] = nil
+        end
+    end
+
+    -- Remove cooldown entry for this player.
+    trackRequestCooldowns[src] = nil
+end)
+
 -- ═══════════════════════════════════════════════════════════════
 --  Expiry Warning Loop  (notifies online evaluators)
 -- ═══════════════════════════════════════════════════════════════
