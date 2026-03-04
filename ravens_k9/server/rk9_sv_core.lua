@@ -247,13 +247,10 @@ end
 
 -- ─── Grant/revoke events by server ID (menu + target flows) ──
 
-local function RK9_GrantCertByServerId(actorSrc, targetServerId, certType)
-    local src = tonumber(actorSrc)
-    local tp  = QBCore.Functions.GetPlayer(tonumber(targetServerId))
-    if not src or not tp then
-        if src then RK9_Notify(src, 'Player not found.', 'error') end
-        return
-    end
+RegisterNetEvent('rk9:sv:grantCertByServerId', function(targetServerId, certType, actorSrc)
+    local src = tonumber(actorSrc) or source
+    local tp  = QBCore.Functions.GetPlayer(targetServerId)
+    if not tp then RK9_Notify(src, 'Player not found.', 'error') return end
     RK9_DoGrantCert(src, tp.PlayerData.citizenid, certType)
 end
 
@@ -274,8 +271,11 @@ RegisterNetEvent('rk9:sv:grantCertByServerId', function(targetServerId, certType
     RK9_GrantCertByServerId(source, targetServerId, certType)
 end)
 
-RegisterNetEvent('rk9:sv:revokeCertByServerId', function(targetServerId, certType)
-    RK9_RevokeCertByServerId(source, targetServerId, certType)
+RegisterNetEvent('rk9:sv:revokeCertByServerId', function(targetServerId, certType, actorSrc)
+    local src = tonumber(actorSrc) or source
+    local tp  = QBCore.Functions.GetPlayer(targetServerId)
+    if not tp then RK9_Notify(src, 'Player not found.', 'error') return end
+    RK9_DoRevokeCert(src, tp.PlayerData.citizenid, certType)
 end)
 
 -- ─── Grant/revoke events by citizenid (chat commands) ─────────
@@ -354,13 +354,6 @@ RegisterNetEvent('rk9:sv:trackHuman', function(targetServerId, mode)
     local src = source
     if not RK9_IsLEO(src) then return end
 
-    local nowMs = GetGameTimer()
-    local nextAllowedAt = trackRequestCooldowns[src] or 0
-    if nowMs < nextAllowedAt then
-        return
-    end
-    trackRequestCooldowns[src] = nowMs + 250
-
     local validModes = {
         nearby = true,
         fleeing = true,
@@ -401,12 +394,6 @@ RegisterNetEvent('rk9:sv:trackHuman', function(targetServerId, mode)
         end
     end
 
-    pendingTrackRequests[tgt] = pendingTrackRequests[tgt] or {}
-    pendingTrackRequests[tgt][src] = {
-        mode = mode,
-        expiresAt = GetGameTimer() + 5000,
-    }
-
     -- ask the target client for its coords
     TriggerClientEvent('rk9:cl:provideTrackCoords', tgt, src, mode)
 end)
@@ -426,10 +413,8 @@ RegisterNetEvent('rk9:sv:trackCoordsResponse', function(requesterSrc, coords, mo
     }
     if not validModes[mode] then return end
 
-    local pendingByResponder = pendingTrackRequests[responderSrc]
-    local pending = pendingByResponder and pendingByResponder[requesterId]
-    if not pending or pending.mode ~= mode or pending.expiresAt < GetGameTimer() then
-        return
+    if coords and coords.x then
+        TriggerClientEvent('rk9:cl:trackingUpdate', requesterId, coords, mode)
     end
 
     pendingByResponder[requesterId] = nil

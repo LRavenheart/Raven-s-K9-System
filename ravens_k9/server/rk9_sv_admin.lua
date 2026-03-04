@@ -136,7 +136,7 @@ QBCore.Commands.Add(
         if not targetPlayer then
             RK9_Notify(source, 'Player not found.', 'error') return
         end
-        exports['ravens_k9']:RK9_GrantCertByServerId(source, targetSrc, certType)
+        TriggerEvent('rk9:sv:grantCertByServerId', targetSrc, certType, source)
     end,
     'user'
 )
@@ -157,7 +157,7 @@ QBCore.Commands.Add(
         if not targetPlayer then
             RK9_Notify(source, 'Player not found.', 'error') return
         end
-        exports['ravens_k9']:RK9_RevokeCertByServerId(source, targetSrc, certType)
+        TriggerEvent('rk9:sv:revokeCertByServerId', targetSrc, certType, source)
     end,
     'user'
 )
