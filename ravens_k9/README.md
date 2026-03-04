@@ -1,28 +1,41 @@
 # 🐾 Raven's K9 System
 **Author:** Raven | **Version:** 1.0.0 | **Framework:** QBCore
 
-> Advanced player-controlled K9 resource with certification management, item detection, human tracking (including Search and Rescue), ox_target integration, and a full evaluator/admin role system.
+Advanced player-controlled K9 resource with certification workflows, role-based access, item detection, and server-authoritative human tracking.
+
+---
+
+## What this resource does
+
+Raven’s K9 System supports four practical in-game roles:
+
+- **K9 Player**: performs operational K9 actions (sniff/track) when eligible.
+- **Handler**: paperwork/check role (view K9 certs only).
+- **Evaluator**: grants/revokes certifications.
+- **Admin**: manages evaluators and has full evaluator capability.
+
+By default, operational K9 actions require an active **Patrol** certification (`RequirePatrolCertForK9Actions = true`).
 
 ---
 
 ## File Structure
 
-```
+```txt
 ravens_k9/
 ├── fxmanifest.lua
 ├── rk9_install.sql
 ├── shared/
-│   ├── rk9_config.lua        ← All server configuration
-│   └── rk9_cert_utils.lua    ← Shared cert helpers (client + server)
+│   ├── rk9_config.lua        # Main configuration
+│   └── rk9_cert_utils.lua    # Shared cert/date/status helpers
 ├── client/
-│   ├── rk9_cl_core.lua       ← Player state, base commands, exports
-│   ├── rk9_cl_menus.lua      ← All ox_lib context menus
-│   ├── rk9_cl_detection.lua  ← Sniff animations, tracking modes and thread
-│   └── rk9_cl_target.lua     ← ox_target global hooks
+│   ├── rk9_cl_core.lua       # Player state, command guards, exports
+│   ├── rk9_cl_menus.lua      # ox_lib context menus
+│   ├── rk9_cl_detection.lua  # Sniff + tracking client logic
+│   └── rk9_cl_target.lua     # ox_target interactions
 └── server/
-    ├── rk9_sv_core.lua       ← DB init, authority helpers, cert logic, sniff, tracking
-    ├── rk9_sv_certs.lua      ← ox_lib callbacks (cert data + role checks)
-    └── rk9_sv_admin.lua      ← Evaluator management events + chat commands
+    ├── rk9_sv_core.lua       # DB init, role checks, cert + tracking logic
+    ├── rk9_sv_certs.lua      # ox_lib callbacks
+    └── rk9_sv_admin.lua      # Evaluator/admin command and event flows
 ```
 
 ---
@@ -40,11 +53,11 @@ ravens_k9/
 
 ## Installation
 
-### 1. Place the resource
-Drop the `ravens_k9` folder into your `resources/` directory.
+### 1) Place the resource
+Drop `ravens_k9` in your FiveM `resources/` folder.
 
-### 2. server.cfg load order
-```
+### 2) Ensure load order (`server.cfg`)
+```cfg
 ensure ox_lib
 ensure ox_target
 ensure oxmysql
@@ -52,12 +65,12 @@ ensure qb-core
 ensure ravens_k9
 ```
 
-### 3. Database
-Tables are created automatically on first resource start.
-To create them manually, run `rk9_install.sql` on your database.
+### 3) Database
+Tables auto-create on first start. Optionally run `rk9_install.sql` manually.
 
-### 4. Add the cert card item to QBCore
+### 4) Add cert card item
 In `qb-core/shared/items.lua`:
+
 ```lua
 ['rk9_cert_card'] = {
     name        = 'rk9_cert_card',
@@ -99,21 +112,32 @@ Edit `shared/rk9_config.lua`:
 | `humantrack` | Human Tracking | Nearby and Fleeing Suspect tracking |
 | `sar` | Search and Rescue | Unlocks Missing Person (server-wide) tracking |
 
-> **Note:** `sar` builds on `humantrack`. A handler must hold both certifications to access Missing Person mode. `humantrack` alone grants Nearby and Fleeing Suspect modes only.
+> SAR builds on Human Tracking. Missing Person mode requires both `humantrack` and `sar`.
+
+---
+
+## Role & Access Model
+
+| Role | Requirements | Access |
+|---|---|---|
+| **Handler** | Allowed LEO job + active `handler` cert | View nearby K9 certs only |
+| **K9 Player** | Allowed LEO job + active `patrol` cert (default policy) | Menu, sniff, track, view certs |
+| **Evaluator** | Admin-assigned evaluator OR admin group | All Handler/K9 Player actions + grant/revoke certs |
+| **Admin** | QBCore admin group | All evaluator actions + evaluator management |
+
+Evaluators are stored by **CitizenID** in `ravens_k9_evaluators`.
 
 ---
 
 ## Human Tracking Modes
 
-| Mode | Cert Required | Player Pool | Blip | Timeout |
-|---|---|---|---|---|
-| ⬜ Nearby Suspect | `humantrack` | Within 50m | Grey | 10 min |
-| 🟡 Fleeing Suspect | `humantrack` | Within 50m | Yellow | 20 min |
-| 🔵 Missing Person | `humantrack` + `sar` | All online players | Blue | 60 min |
+| Mode | Required Certs | Candidate Pool | Default Timeout |
+|---|---|---|---|
+| Nearby Suspect | `humantrack` | Players within `TrackingRadius` | 10 min |
+| Fleeing Suspect | `humantrack` | Players within `TrackingRadius` | 20 min |
+| Missing Person | `humantrack` + `sar` | All online players | 60 min |
 
-- **Nearby Suspect** — standard patrol tracking for players in close range.
-- **Fleeing Suspect** — active pursuit mode. Same proximity scope as Nearby but with a longer timeout to accommodate a chase in progress.
-- **Missing Person** — Search and Rescue operations only. Server-wide player pool regardless of distance. Locked to handlers who hold the `sar` cert. If the cert is not held, the option is shown as locked with a description rather than hidden entirely.
+### Server-side hardening
 
 All modes push a live blip to the handler's map every `RK9Config.TrackingUpdateMs` (default: 2 seconds). Tracking is server-authoritative: when a handler requests a location update the server relays the request to the target player's client, which returns its current position; the server then forwards that coordinate (along with the selected mode) back to the handler.
 
@@ -146,14 +170,16 @@ Tracking requests are additionally hardened server-side:
 ### Evaluator
 | Command | Description |
 |---|---|
-| `/k9grantcert [serverID] [certType]` | Grant a certification |
-| `/k9revokecert [serverID] [certType]` | Revoke a certification |
+| `/k9menu` | Open menu (cert viewing only) |
+| `/k9viewcerts` | View nearest player certs |
 
-### Admin
+### Evaluator/Admin
 | Command | Description |
 |---|---|
-| `/k9addevaluator [serverID]` | Add a player as evaluator |
-| `/k9removeevaluator [serverID]` | Remove evaluator status |
+| `/k9grantcert [serverID] [certType]` | Grant certification |
+| `/k9revokecert [serverID] [certType]` | Revoke certification |
+| `/k9addevaluator [serverID]` | Add evaluator (admin) |
+| `/k9removeevaluator [serverID]` | Remove evaluator (admin) |
 
 **certType values:** `handler` `patrol` `firearms` `narcotics` `explosives` `humantrack` `sar`
 
@@ -171,7 +197,7 @@ Tracking requests are additionally hardened server-side:
 | 👣 K9 Track Person | Active K9 unit + `humantrack` cert |
 | ➕ Add as K9 Evaluator | Admin only |
 
-> When selecting **K9 Track Person** via ox_target, a mode picker appears. Missing Person is shown as locked with an explanation if the handler does not hold the `sar` cert.
+---
 
 ### On vehicles (LEO job required; K9 actions require active K9 unit)
 | Label | Access |
@@ -180,7 +206,7 @@ Tracking requests are additionally hardened server-side:
 
 ---
 
-## Role System
+## Migration Notes (from older versions)
 
 | Role | How Assigned | Capabilities |
 |---|---|---|
@@ -189,11 +215,65 @@ Tracking requests are additionally hardened server-side:
 | **Evaluator** | Admin in-game or via DB | All handler actions + grant/revoke certs |
 | **Admin** | QBCore permission group | All evaluator actions + add/remove evaluators |
 
-Evaluators are stored in `ravens_k9_evaluators` by **CitizenID** — they retain the role even if offline or change jobs.
+1. **Review role policy**
+   - Decide who should be **Handler** (view-only) and who should be **K9 Player** (operational).
+2. **Grant baseline certs**
+   - Grant `handler` to cert-check-only players.
+   - Grant `patrol` to players who should run sniff/track operations (when patrol gating is enabled).
+3. **Confirm config behavior**
+   - `RequirePatrolCertForK9Actions = true` (default) enforces patrol cert for operational actions.
+4. **Communicate command expectations**
+   - Handler role can still use `/k9menu`, but operational actions are disabled.
 
 ---
 
-## Certification Notes
+## Configuration Presets
+
+### Preset A: Strict RP (recommended)
+- `RequirePatrolCertForK9Actions = true`
+- Use `handler` for cert-check-only personnel.
+- Keep `humantrack` and `sar` tightly evaluator-controlled.
+
+### Preset B: Transitional rollout
+- Start with `RequirePatrolCertForK9Actions = false` for 1–2 days.
+- Grant missing `patrol` certs.
+- Switch back to `true` once staff are migrated.
+
+### Preset C: Minimal gate
+- `RequirePatrolCertForK9Actions = false`
+- Keep only job-based access with certs mainly for tracking/detection specialization.
+
+---
+
+## Security Model (high level)
+
+- **Client proposes, server decides**: clients may request actions, but server validates role/cert/range/mode before effect.
+- **Tracking is server-authoritative**: coordinate updates are accepted only for recent pending requests and valid mode/session pairing.
+- **Role checks are enforced both client and server side**: client hides options for UX; server remains final authority.
+
+---
+
+## Troubleshooting
+
+### I cannot sniff or track even though I am LEO
+- Check your certs: you likely need `patrol` when `RequirePatrolCertForK9Actions = true`.
+- Ensure your job is listed in `AllowedJobs`.
+
+### I can open `/k9menu` but sniff/track is disabled
+- You are probably in **Handler** role (view-only) or missing `patrol`.
+
+### Missing Person mode is locked
+- You need both `humantrack` and `sar` active certs.
+
+### “No player found” or no cert data when viewing
+- Ensure target player is in range (`ViewNearbyRadius`) and online.
+
+### Track blip updates are not appearing
+- Verify `ox_lib`, `ox_target`, `oxmysql`, and `qb-core` are started before this resource.
+
+---
+
+## Changelog
 
 - Certs are stored against a player's **CitizenID**, not their job. They persist through job changes.
 - Expired certifications are treated as inactive for gated features (for example detection and human tracking checks).
