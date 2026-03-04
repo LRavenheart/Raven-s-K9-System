@@ -186,7 +186,7 @@ Tracking requests are additionally hardened server-side:
 |---|---|---|
 | **Handler** | QBCore job + active Handler cert | View nearby K9 certs only |
 | **K9 Player** | QBCore job + active Patrol cert (default) | Menu, sniff, track, view certs |
-| **Evaluator** | Admin in-game or via DB | All K9 Player/Handler actions + grant/revoke certs |
+| **Evaluator** | Admin in-game or via DB | All handler actions + grant/revoke certs |
 | **Admin** | QBCore permission group | All evaluator actions + add/remove evaluators |
 
 Evaluators are stored in `ravens_k9_evaluators` by **CitizenID** — they retain the role even if offline or change jobs.
