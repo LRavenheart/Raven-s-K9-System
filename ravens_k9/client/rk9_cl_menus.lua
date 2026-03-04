@@ -39,26 +39,7 @@ function RK9_OpenMainMenu()
     local isEval  = lib.callback.await('rk9:cb:isEvaluator', false)
     local isAdmin = lib.callback.await('rk9:cb:isAdmin',     false)
     local isK9    = exports['ravens_k9']:RK9_IsK9Unit()
-    local isHandler = exports['ravens_k9']:RK9_IsHandler()
     local canView = exports['ravens_k9']:RK9_CanViewDogCerts()
-
-    local certSummary = {}
-    local activeCount = 0
-    for _, cert in ipairs(exports['ravens_k9']:RK9_GetMyCerts()) do
-        if not RK9Certs.IsExpired(cert.expires_at) then
-            activeCount = activeCount + 1
-            certSummary[#certSummary + 1] = RK9Certs.GetLabel(cert.cert_type)
-        end
-    end
-
-    local roleLabel = isK9 and 'K9 Player' or (isHandler and 'Handler' or 'LEO')
-    if isAdmin then
-        roleLabel = roleLabel .. ' + Admin'
-    elseif isEval then
-        roleLabel = roleLabel .. ' + Evaluator'
-    end
-
-    local certText = #certSummary > 0 and table.concat(certSummary, ', ') or 'None'
 
     local opts = {
         {

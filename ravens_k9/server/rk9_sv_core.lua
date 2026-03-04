@@ -121,26 +121,9 @@ local function RK9_HasActiveCert(citizenid, certType)
     return row ~= nil
 end
 
-local function RK9_IsK9Unit(src)
-    if not RK9_IsLEO(src) then return false end
-    if RK9Config.RequirePatrolCertForK9Actions then
-        return RK9_HasActiveCert(RK9_GetCitizenId(src), 'patrol')
-    end
-    return true
-end
-
-local function RK9_IsHandler(src)
-    return RK9_IsLEO(src) and RK9_HasActiveCert(RK9_GetCitizenId(src), 'handler')
-end
-
-local function RK9_CanViewDogCerts(src)
-    return RK9_IsK9Unit(src) or RK9_IsHandler(src)
-end
-
 exports('RK9_IsLEO',         RK9_IsLEO)
 exports('RK9_IsK9Unit',      RK9_IsK9Unit)
 exports('RK9_IsHandler',     RK9_IsHandler)
-exports('RK9_CanViewDogCerts', RK9_CanViewDogCerts)
 exports('RK9_IsAdmin',       RK9_IsAdmin)
 exports('RK9_IsEvaluator',   RK9_IsEvaluator)
 exports('RK9_GetCitizenId',  RK9_GetCitizenId)
@@ -289,13 +272,10 @@ end
 
 -- ─── Grant/revoke events by server ID (menu + target flows) ──
 
-local function RK9_GrantCertByServerId(actorSrc, targetServerId, certType)
-    local src = tonumber(actorSrc)
-    local tp  = QBCore.Functions.GetPlayer(tonumber(targetServerId))
-    if not src or not tp then
-        if src then RK9_Notify(src, 'Player not found.', 'error') end
-        return
-    end
+RegisterNetEvent('rk9:sv:grantCertByServerId', function(targetServerId, certType, actorSrc)
+    local src = tonumber(actorSrc) or source
+    local tp  = QBCore.Functions.GetPlayer(targetServerId)
+    if not tp then RK9_Notify(src, 'Player not found.', 'error') return end
     RK9_DoGrantCert(src, tp.PlayerData.citizenid, certType)
 end
 
@@ -316,8 +296,11 @@ RegisterNetEvent('rk9:sv:grantCertByServerId', function(targetServerId, certType
     RK9_GrantCertByServerId(source, targetServerId, certType)
 end)
 
-RegisterNetEvent('rk9:sv:revokeCertByServerId', function(targetServerId, certType)
-    RK9_RevokeCertByServerId(source, targetServerId, certType)
+RegisterNetEvent('rk9:sv:revokeCertByServerId', function(targetServerId, certType, actorSrc)
+    local src = tonumber(actorSrc) or source
+    local tp  = QBCore.Functions.GetPlayer(targetServerId)
+    if not tp then RK9_Notify(src, 'Player not found.', 'error') return end
+    RK9_DoRevokeCert(src, tp.PlayerData.citizenid, certType)
 end)
 
 -- ─── Grant/revoke events by citizenid (chat commands) ─────────
@@ -413,17 +396,7 @@ end)
 -- `mode` parameter is echoed back so the client can colour the blip correctly.
 RegisterNetEvent('rk9:sv:trackHuman', function(targetServerId, mode)
     local src = source
-    if not RK9_IsK9Unit(src) then
-        TriggerClientEvent('rk9:cl:notify', src, 'You must be the active K9 unit to track targets.', 'error')
-        return
-    end
-
-    local nowMs = GetGameTimer()
-    local nextAllowedAt = trackRequestCooldowns[src] or 0
-    if nowMs < nextAllowedAt then
-        return
-    end
-    trackRequestCooldowns[src] = nowMs + 250
+    if not RK9_IsLEO(src) then return end
 
     local validModes = {
         nearby = true,
@@ -465,14 +438,6 @@ RegisterNetEvent('rk9:sv:trackHuman', function(targetServerId, mode)
         end
     end
 
-    -- Bind this request to (target -> requester) for a short validation window.
-    -- The target client can only respond successfully if this pending entry exists.
-    pendingTrackRequests[tgt] = pendingTrackRequests[tgt] or {}
-    pendingTrackRequests[tgt][src] = {
-        mode = mode,
-        expiresAt = GetGameTimer() + 5000,
-    }
-
     -- ask the target client for its coords
     TriggerClientEvent('rk9:cl:provideTrackCoords', tgt, src, mode)
 end)
@@ -492,11 +457,17 @@ RegisterNetEvent('rk9:sv:trackCoordsResponse', function(requesterSrc, coords, mo
     }
     if not validModes[mode] then return end
 
-    -- Validate that this response matches a recent server-issued request.
-    local pendingByResponder = pendingTrackRequests[responderSrc]
-    local pending = pendingByResponder and pendingByResponder[requesterId]
-    if not pending or pending.mode ~= mode or pending.expiresAt < GetGameTimer() then
-        return
+    if coords and coords.x then
+        TriggerClientEvent('rk9:cl:trackingUpdate', requesterId, coords, mode)
+    end
+
+    pendingByResponder[requesterId] = nil
+    if next(pendingByResponder) == nil then
+        pendingTrackRequests[responderSrc] = nil
+    end
+
+    if coords and type(coords.x) == 'number' and type(coords.y) == 'number' and type(coords.z) == 'number' then
+        TriggerClientEvent('rk9:cl:trackingUpdate', requesterId, coords, mode)
     end
 
     pendingByResponder[requesterId] = nil
@@ -528,6 +499,63 @@ RegisterNetEvent('rk9:sv:mdtTrackStatus', function(mode, status)
             'K9-TRACK'
         )
     end
+end)
+
+-- Cleanup short-lived request/cooldown caches when players disconnect.
+AddEventHandler('playerDropped', function()
+    local src = source
+
+    -- Remove entries where this player was the responder.
+    pendingTrackRequests[src] = nil
+
+    -- Remove entries where this player was the requester.
+    for responderSrc, requesterMap in pairs(pendingTrackRequests) do
+        requesterMap[src] = nil
+        if next(requesterMap) == nil then
+            pendingTrackRequests[responderSrc] = nil
+        end
+    end
+
+    -- Remove cooldown entry for this player.
+    trackRequestCooldowns[src] = nil
+end)
+
+-- Cleanup short-lived request/cooldown caches when players disconnect.
+AddEventHandler('playerDropped', function()
+    local src = source
+
+    -- Remove entries where this player was the responder.
+    pendingTrackRequests[src] = nil
+
+    -- Remove entries where this player was the requester.
+    for responderSrc, requesterMap in pairs(pendingTrackRequests) do
+        requesterMap[src] = nil
+        if next(requesterMap) == nil then
+            pendingTrackRequests[responderSrc] = nil
+        end
+    end
+
+    -- Remove cooldown entry for this player.
+    trackRequestCooldowns[src] = nil
+end)
+
+-- Cleanup short-lived request/cooldown caches when players disconnect.
+AddEventHandler('playerDropped', function()
+    local src = source
+
+    -- Remove entries where this player was the responder.
+    pendingTrackRequests[src] = nil
+
+    -- Remove entries where this player was the requester.
+    for responderSrc, requesterMap in pairs(pendingTrackRequests) do
+        requesterMap[src] = nil
+        if next(requesterMap) == nil then
+            pendingTrackRequests[responderSrc] = nil
+        end
+    end
+
+    -- Remove cooldown entry for this player.
+    trackRequestCooldowns[src] = nil
 end)
 
 -- Cleanup short-lived request/cooldown caches when players disconnect.

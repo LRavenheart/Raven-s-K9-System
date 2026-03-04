@@ -19,13 +19,6 @@ RK9Config.AllowedJobs = {
 -- ─── QBCore permission groups that count as "admin" ─────────
 RK9Config.AdminGroups = { 'admin', 'superadmin', 'god' }
 
--- ─── Optional MDT integration (ps-mdt) ───────────────────────
---  When enabled and ps-mdt is started, RK9 can push K9 alerts/calls
---  for positive sniffs and tracking activity.
---  This integration is optional and fail-safe.
-RK9Config.PsMdtIntegration = true
-RK9Config.PsMdtCallSign = 'K9'
-
 -- ─── K9 roleplay gating ──────────────────────────────────────
 --  When enabled, core K9 actions (sniffing + tracking) require an
 --  active Patrol certification in addition to job/role checks.

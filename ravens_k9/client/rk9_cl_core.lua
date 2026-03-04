@@ -39,12 +39,12 @@ local function RK9_IsK9Unit()
     return true
 end
 
---- Returns true if the player has Handler cert access for cert-view workflows.
+--- Returns true if the player is a handler-only role (cert viewing access).
 local function RK9_IsHandler()
     return RK9_IsLEO() and RK9_HasActiveCert('handler')
 end
 
---- Returns true if the player can run cert-view actions (K9 unit OR Handler).
+--- Returns true if the player can view a nearby dog's certifications.
 local function RK9_CanViewDogCerts()
     return RK9_IsK9Unit() or RK9_IsHandler()
 end

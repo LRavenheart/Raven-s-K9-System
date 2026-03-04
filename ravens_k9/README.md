@@ -16,11 +16,6 @@ Raven’s K9 System supports four practical in-game roles:
 
 By default, operational K9 actions require an active **Patrol** certification (`RequirePatrolCertForK9Actions = true`).
 
-The built-in UI uses an **Operations Console** approach:
-- Role-aware main menu status block (role + active certification summary).
-- Contextual `ox_target` actions in-world.
-- Lightweight live tracking HUD text overlay while tracking is active.
-
 ---
 
 ## File Structure
@@ -95,19 +90,17 @@ In `qb-core/shared/items.lua`:
 },
 ```
 
-### 5) Configure (`shared/rk9_config.lua`)
-
-- `RK9Config.AllowedJobs` — job names allowed to use this system.
-- `RK9Config.AdminGroups` — QBCore permission groups counted as admin.
-- `RK9Config.PsMdtIntegration` — enable/disable ps-mdt call integration.
-- `RK9Config.PsMdtCallSign` — callsign label used on K9 MDT call payloads.
-- `RK9Config.RequirePatrolCertForK9Actions` — if `true`, sniff + tracking require active `patrol` cert.
-- `RK9Config.DetectableItems` — item lists used by detection certs.
-- `RK9Config.CertExpiryDays` — cert lifespan in days.
-- `RK9Config.TrackingRadius` — proximity scan radius for nearby/fleeing modes.
-- `RK9Config.ViewNearbyRadius` — max distance for nearby cert viewing.
-- `RK9Config.TrackingTimeout` — per-mode tracking timeout.
-- `RK9Config.TrackingBlipColour` — per-mode blip colors.
+### 5. Configure
+Edit `shared/rk9_config.lua`:
+- `RK9Config.AllowedJobs` — add every LEO job name on your server
+- `RK9Config.AdminGroups` — match your QBCore permission group names
+- `RK9Config.RequirePatrolCertForK9Actions` — require active Patrol cert for core K9 actions (default: true)
+- `RK9Config.DetectableItems` — add/remove QBCore item names per cert type
+- `RK9Config.CertExpiryDays` — adjust cert lifespan (default: 365 days)
+- `RK9Config.TrackingRadius` — proximity range for Nearby and Fleeing modes (default: 50m)
+- `RK9Config.ViewNearbyRadius` — radius used by `/k9viewcerts` and context menus when querying nearby handlers (default: 10m)
+- `RK9Config.TrackingTimeout` — per-mode session auto-expiry in ms
+- `RK9Config.TrackingBlipColour` — GTA blip colour IDs per tracking mode
 
 ---
 
@@ -115,13 +108,13 @@ In `qb-core/shared/items.lua`:
 
 | ID | Label | Purpose |
 |---|---|---|
-| `handler` | Handler Certification | Cert-check-only role (view nearby K9 certs) |
-| `patrol` | Patrol Certification | Core K9 operational baseline |
-| `firearms` | Firearms Detection | Weapon/ammo detection |
-| `narcotics` | Narcotics Detection | Drug/paraphernalia detection |
-| `explosives` | Explosives Detection | Explosives/precursor detection |
-| `humantrack` | Human Tracking | Nearby + fleeing suspect tracking |
-| `sar` | Search and Rescue | Unlocks server-wide missing person mode |
+| `handler` | Handler Certification | View nearby K9 certifications only |
+| `patrol` | Patrol Certification | Basic K9 handler/obedience |
+| `firearms` | Firearms Detection | Weapons, ammo |
+| `narcotics` | Narcotics Detection | Drugs, paraphernalia |
+| `explosives` | Explosives Detection | Grenades, C4, detonators |
+| `humantrack` | Human Tracking | Nearby and Fleeing Suspect tracking |
+| `sar` | Search and Rescue | Unlocks Missing Person (server-wide) tracking |
 
 > SAR builds on Human Tracking. Missing Person mode requires both `humantrack` and `sar`.
 
@@ -150,30 +143,35 @@ Evaluators are stored by **CitizenID** in `ravens_k9_evaluators`.
 
 ### Server-side hardening
 
-Tracking is server-authoritative and hardened by:
+All modes push a live blip to the handler's map every `RK9Config.TrackingUpdateMs` (default: 2 seconds). Tracking is server-authoritative: when a handler requests a location update the server relays the request to the target player's client, which returns its current position; the server then forwards that coordinate (along with the selected mode) back to the handler.
 
-- Mode allowlist validation (`nearby`, `fleeing`, `missing`).
-- Cert enforcement by mode (`humantrack`, plus `sar` for missing).
-- Server-side proximity checks for nearby/fleeing.
-- Pending request matching for coordinate responses.
-- Lightweight per-request cooldown.
-- Request/cooldown cache cleanup on disconnect.
+Tracking requests are additionally hardened server-side:
+- Mode requests are validated (`nearby`, `fleeing`, `missing`) and cert requirements are enforced (`humantrack` + `sar` for Missing Person).
+- Nearby/Fleeing requests are range-validated on the server before coordinate polling is allowed.
+- Coordinate responses are accepted only if they match a recent server-issued pending request for that requester/responder pair and mode.
+- A lightweight per-request cooldown is applied to reduce spam load.
 
 ---
 
 ## Commands
 
-### K9 Player (active unit)
+### K9 Player (active K9 unit)
 | Command | Description |
 |---|---|
-| `/k9menu` | Open main K9 menu |
-| `/k9sniffped` | Sniff nearest player |
-| `/k9sniffveh` | Sniff nearest vehicle |
-| `/k9track` | Open tracking mode picker |
-| `/k9stoptrack` | Stop active tracking |
-| `/k9viewcerts` | View nearest player certs |
+| `/k9menu` | Open the main K9 menu |
+| `/k9sniffped` | Sniff the nearest player |
+| `/k9sniffveh` | Sniff the nearest vehicle |
+| `/k9track` | Open the tracking mode menu |
+| `/k9stoptrack` | Stop the active tracking session |
+| `/k9viewcerts` | View the nearest player's K9 certs |
 
-### Handler (view-only)
+### Handler (cert-check role)
+| Command | Description |
+|---|---|
+| `/k9menu` | Open K9 menu (cert viewing actions only) |
+| `/k9viewcerts` | View the nearest player's K9 certs |
+
+### Evaluator
 | Command | Description |
 |---|---|
 | `/k9menu` | Open menu (cert viewing only) |
@@ -187,53 +185,39 @@ Tracking is server-authoritative and hardened by:
 | `/k9addevaluator [serverID]` | Add evaluator (admin) |
 | `/k9removeevaluator [serverID]` | Remove evaluator (admin) |
 
-Valid `certType` values:
-`handler` `patrol` `firearms` `narcotics` `explosives` `humantrack` `sar`
+**certType values:** `handler` `patrol` `firearms` `narcotics` `explosives` `humantrack` `sar`
 
 ---
 
 ## ox_target Interactions
 
-### Player peds
-| Interaction | Access |
+### On player peds (LEO job required; K9 actions require active K9 unit)
+| Label | Access |
 |---|---|
 | 🐾 K9 Sniff Person | Active K9 unit |
 | 📋 View K9 Certs | Active K9 unit or Handler |
-| ✅ Grant K9 Cert | Evaluator/Admin |
-| ❌ Revoke K9 Cert | Evaluator/Admin |
-| 👣 K9 Track Person | Active K9 unit + `humantrack` |
-| ➕ Add as K9 Evaluator | Admin |
+| ✅ Grant K9 Cert | Evaluator / Admin |
+| ❌ Revoke K9 Cert | Evaluator / Admin |
+| 👣 K9 Track Person | Active K9 unit + `humantrack` cert |
+| ➕ Add as K9 Evaluator | Admin only |
 
-### Vehicles
-| Interaction | Access |
+---
+
+### On vehicles (LEO job required; K9 actions require active K9 unit)
+| Label | Access |
 |---|---|
 | 🐾 K9 Sniff Vehicle | Active K9 unit |
 
 ---
 
-## UI Overview
-
-- **Operations Console (`/k9menu`)**
-  - Displays a role/cert status panel at the top.
-  - Automatically disables actions the current player is not allowed to perform.
-- **Context Actions (`ox_target`)**
-  - Fast player/vehicle interaction without opening the full menu.
-- **Tracking HUD**
-  - While tracking is active, a right-side text overlay shows mode, remaining time, and stop command.
-
-## Certification Notes
-
-- Certs are stored by **CitizenID**, not by job.
-- Expired certs are treated as **inactive** for gated features.
-- Evaluators are warned when certs near expiry (`ExpiryWarnDays`).
-- Expiry checks run at startup and every 6 hours.
-- Granting certs issues `rk9_cert_card` to online recipients.
-
----
-
 ## Migration Notes (from older versions)
 
-If you are upgrading from a version before the Handler role / Patrol gating changes:
+| Role | How Assigned | Capabilities |
+|---|---|---|
+| **Handler** | QBCore job + active Handler cert | View nearby K9 certs only |
+| **K9 Player** | QBCore job + active Patrol cert (default) | Menu, sniff, track, view certs |
+| **Evaluator** | Admin in-game or via DB | All handler actions + grant/revoke certs |
+| **Admin** | QBCore permission group | All evaluator actions + add/remove evaluators |
 
 1. **Review role policy**
    - Decide who should be **Handler** (view-only) and who should be **K9 Player** (operational).
@@ -254,41 +238,14 @@ If you are upgrading from a version before the Handler role / Patrol gating chan
 - Use `handler` for cert-check-only personnel.
 - Keep `humantrack` and `sar` tightly evaluator-controlled.
 
-```lua
-RK9Config.RequirePatrolCertForK9Actions = true
-RK9Config.AllowedJobs = { 'police', 'sheriff', 'statepolice', 'bcso' }
-```
-
 ### Preset B: Transitional rollout
 - Start with `RequirePatrolCertForK9Actions = false` for 1–2 days.
 - Grant missing `patrol` certs.
 - Switch back to `true` once staff are migrated.
 
-```lua
--- Day 1–2
-RK9Config.RequirePatrolCertForK9Actions = false
--- After staff cert migration
--- RK9Config.RequirePatrolCertForK9Actions = true
-```
-
 ### Preset C: Minimal gate
 - `RequirePatrolCertForK9Actions = false`
 - Keep only job-based access with certs mainly for tracking/detection specialization.
-
-```lua
-RK9Config.RequirePatrolCertForK9Actions = false
-```
-
-### Suggested migration commands (in-game)
-
-After switching policies, evaluators/admins can quickly align player certs:
-
-```txt
-/k9grantcert <serverID> handler
-/k9grantcert <serverID> patrol
-/k9grantcert <serverID> humantrack
-/k9grantcert <serverID> sar
-```
 
 ---
 
@@ -297,23 +254,6 @@ After switching policies, evaluators/admins can quickly align player certs:
 - **Client proposes, server decides**: clients may request actions, but server validates role/cert/range/mode before effect.
 - **Tracking is server-authoritative**: coordinate updates are accepted only for recent pending requests and valid mode/session pairing.
 - **Role checks are enforced both client and server side**: client hides options for UX; server remains final authority.
-
----
-
-## ps-mdt Integration
-
-When `RK9Config.PsMdtIntegration = true` and `ps-mdt` is running, this resource attempts to push MDT calls for:
-
-- Positive person sniff results.
-- Positive vehicle sniff results.
-- Tracking start/stop events.
-
-Integration is fail-safe: if `ps-mdt` is missing or API events/exports are unavailable, core K9 gameplay still works.
-
-Implementation detail (current behavior):
-- Uses `PsMdtCallSign` in call payload metadata.
-- Attempts both common call paths (`exports['ps-mdt']:CreateCall(...)` and `ps-mdt:server:CreateCall`) with protected calls.
-- Tracking stop calls are emitted for both manual stop and timeout expiry.
 
 ---
 
@@ -339,11 +279,12 @@ Implementation detail (current behavior):
 
 ## Changelog
 
-### 1.0.0+
-- Added Handler (view-only) role and cert.
-- Added optional Patrol-cert gating for operational K9 actions.
-- Hardened server-side tracking request/response validation and anti-spam.
-- Refined docs for role/access clarity.
+- Certs are stored against a player's **CitizenID**, not their job. They persist through job changes.
+- Expired certifications are treated as inactive for gated features (for example detection and human tracking checks).
+- Online evaluators receive in-game warnings when any cert is within `RK9Config.ExpiryWarnDays` (default: 30) days of expiry. Regular handlers are not notified.
+- The expiry check runs at resource start and every 6 hours.
+- Each cert record stores: issue date, expiry date, evaluator CitizenID, and evaluator full name.
+- A physical `rk9_cert_card` inventory item is issued to the handler on certification.
 
 ---
 
