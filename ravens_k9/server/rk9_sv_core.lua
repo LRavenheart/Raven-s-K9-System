@@ -122,6 +122,8 @@ local function RK9_HasActiveCert(citizenid, certType)
 end
 
 exports('RK9_IsLEO',         RK9_IsLEO)
+exports('RK9_IsK9Unit',      RK9_IsK9Unit)
+exports('RK9_IsHandler',     RK9_IsHandler)
 exports('RK9_IsAdmin',       RK9_IsAdmin)
 exports('RK9_IsEvaluator',   RK9_IsEvaluator)
 exports('RK9_GetCitizenId',  RK9_GetCitizenId)
@@ -149,7 +151,10 @@ end)
 
 RegisterNetEvent('rk9:sv:requestTargetCerts', function(targetServerId)
     local src = source
-    if not RK9_IsLEO(src) then return end
+    if not RK9_CanViewDogCerts(src) then
+        RK9_Notify(src, 'You must be an active K9 unit or certified Handler to view certs.', 'error')
+        return
+    end
     local targetPlayer = QBCore.Functions.GetPlayer(targetServerId)
     if not targetPlayer then
         RK9_Notify(src, 'Player not found.', 'error') return
@@ -294,7 +299,10 @@ end)
 
 RegisterNetEvent('rk9:sv:sniffPed', function(targetServerId, certTypes)
     local src          = source
-    if not RK9_IsLEO(src) then return end
+    if not RK9_IsK9Unit(src) then
+        RK9_Notify(src, 'You must be the active K9 unit to perform a sniff.', 'error')
+        return
+    end
     local targetPlayer = QBCore.Functions.GetPlayer(targetServerId)
     if not targetPlayer then
         TriggerClientEvent('rk9:cl:sniffResult', src, false, {}) return
@@ -317,7 +325,10 @@ end)
 
 RegisterNetEvent('rk9:sv:sniffVehicle', function(vehiclePlate, certTypes)
     local src   = source
-    if not RK9_IsLEO(src) then return end
+    if not RK9_IsK9Unit(src) then
+        RK9_Notify(src, 'You must be the active K9 unit to perform a sniff.', 'error')
+        return
+    end
     local found = {}
 
     for _, playerId in ipairs(GetPlayers()) do
@@ -425,6 +436,25 @@ RegisterNetEvent('rk9:sv:trackCoordsResponse', function(requesterSrc, coords, mo
     if coords and type(coords.x) == 'number' and type(coords.y) == 'number' and type(coords.z) == 'number' then
         TriggerClientEvent('rk9:cl:trackingUpdate', requesterId, coords, mode)
     end
+end)
+
+-- Cleanup short-lived request/cooldown caches when players disconnect.
+AddEventHandler('playerDropped', function()
+    local src = source
+
+    -- Remove entries where this player was the responder.
+    pendingTrackRequests[src] = nil
+
+    -- Remove entries where this player was the requester.
+    for responderSrc, requesterMap in pairs(pendingTrackRequests) do
+        requesterMap[src] = nil
+        if next(requesterMap) == nil then
+            pendingTrackRequests[responderSrc] = nil
+        end
+    end
+
+    -- Remove cooldown entry for this player.
+    trackRequestCooldowns[src] = nil
 end)
 
 -- Cleanup short-lived request/cooldown caches when players disconnect.

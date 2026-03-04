@@ -50,12 +50,13 @@ local function RK9_PlaySniffAnim(duration, callback)
 end
 
 --- Returns cert type IDs that are active (not expired) and relevant
---- to item detection. Excludes behaviour-only certs: patrol, humantrack, sar.
+--- to item detection. Excludes behaviour-only certs: handler, patrol, humantrack, sar.
 local function RK9_GetDetectionCerts()
     local active = {}
     for _, c in ipairs(exports['ravens_k9']:RK9_GetMyCerts()) do
         if not RK9Certs.IsExpired(c.expires_at)
             and c.cert_type ~= 'patrol'
+            and c.cert_type ~= 'handler'
             and c.cert_type ~= 'humantrack'
             and c.cert_type ~= 'sar'
         then
@@ -68,8 +69,8 @@ end
 -- ─── Sniff Ped ───────────────────────────────────────────────
 
 RegisterNetEvent('rk9:cl:doSniffPed', function()
-    if not exports['ravens_k9']:RK9_IsLEO() then
-        exports['ravens_k9']:RK9_Notify('LEO access only.', 'error') return
+    if not exports['ravens_k9']:RK9_IsK9Unit() then
+        exports['ravens_k9']:RK9_Notify('You must be the active K9 unit to do this.', 'error') return
     end
 
     local certTypes = RK9_GetDetectionCerts()
@@ -109,8 +110,8 @@ end)
 -- ─── Sniff Vehicle ────────────────────────────────────────────
 
 RegisterNetEvent('rk9:cl:doSniffVehicle', function()
-    if not exports['ravens_k9']:RK9_IsLEO() then
-        exports['ravens_k9']:RK9_Notify('LEO access only.', 'error') return
+    if not exports['ravens_k9']:RK9_IsK9Unit() then
+        exports['ravens_k9']:RK9_Notify('You must be the active K9 unit to do this.', 'error') return
     end
 
     local certTypes = RK9_GetDetectionCerts()
@@ -179,8 +180,8 @@ local RK9TrackTimeout = nil   -- handle returned by SetTimeout for the active se
 -- Opens the tracking mode selection menu.
 -- Missing Person is only shown if the handler also holds the SAR cert.
 RegisterNetEvent('rk9:cl:doTrackHuman', function()
-    if not exports['ravens_k9']:RK9_IsLEO() then
-        exports['ravens_k9']:RK9_Notify('LEO access only.', 'error') return
+    if not exports['ravens_k9']:RK9_IsK9Unit() then
+        exports['ravens_k9']:RK9_Notify('You must be the active K9 unit to do this.', 'error') return
     end
     if not exports['ravens_k9']:RK9_HasActiveCert('humantrack') then
         exports['ravens_k9']:RK9_Notify('Human Tracking certification required.', 'error')

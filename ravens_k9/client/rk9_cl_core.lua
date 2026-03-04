@@ -30,6 +30,25 @@ local function RK9_HasActiveCert(certType)
     return false
 end
 
+--- Returns true if the player is acting as the active K9 unit.
+local function RK9_IsK9Unit()
+    if not RK9_IsLEO() then return false end
+    if RK9Config.RequirePatrolCertForK9Actions then
+        return RK9_HasActiveCert('patrol')
+    end
+    return true
+end
+
+--- Returns true if the player is a handler-only role (cert viewing access).
+local function RK9_IsHandler()
+    return RK9_IsLEO() and RK9_HasActiveCert('handler')
+end
+
+--- Returns true if the player can view a nearby dog's certifications.
+local function RK9_CanViewDogCerts()
+    return RK9_IsK9Unit() or RK9_IsHandler()
+end
+
 --- Fire an ox_lib notification.
 local function RK9_Notify(msg, ntype)
     lib.notify({
@@ -109,8 +128,8 @@ end)
 -- ─── View nearby K9 certs logic ───────────────────────────────
 
 local function RK9_ViewNearby()
-    if not RK9_IsLEO() then
-        RK9_Notify('This system is restricted to LEO personnel.', 'error')
+    if not RK9_CanViewDogCerts() then
+        RK9_Notify('You must be an active K9 unit or certified Handler to view certs.', 'error')
         return
     end
     local myPed    = PlayerPedId()
@@ -138,8 +157,8 @@ end
 -- ─── Commands ────────────────────────────────────────────────
 
 RegisterCommand(RK9Config.Cmds.OpenMenu, function()
-    if not RK9_IsLEO() then
-        RK9_Notify('This system is restricted to LEO personnel.', 'error')
+    if not RK9_IsK9Unit() and not RK9_IsHandler() then
+        RK9_Notify('You must be an active K9 unit or certified Handler to use K9 features.', 'error')
         return
     end
     TriggerServerEvent('rk9:sv:fetchMyCerts')
@@ -148,17 +167,17 @@ RegisterCommand(RK9Config.Cmds.OpenMenu, function()
 end, false)
 
 RegisterCommand(RK9Config.Cmds.SniffPed, function()
-    if not RK9_IsLEO() then RK9_Notify('LEO access only.', 'error') return end
+    if not RK9_IsK9Unit() then RK9_Notify('You must be the active K9 unit to use this command.', 'error') return end
     TriggerEvent('rk9:cl:doSniffPed')
 end, false)
 
 RegisterCommand(RK9Config.Cmds.SniffVehicle, function()
-    if not RK9_IsLEO() then RK9_Notify('LEO access only.', 'error') return end
+    if not RK9_IsK9Unit() then RK9_Notify('You must be the active K9 unit to use this command.', 'error') return end
     TriggerEvent('rk9:cl:doSniffVehicle')
 end, false)
 
 RegisterCommand(RK9Config.Cmds.TrackHuman, function()
-    if not RK9_IsLEO() then RK9_Notify('LEO access only.', 'error') return end
+    if not RK9_IsK9Unit() then RK9_Notify('You must be the active K9 unit to use this command.', 'error') return end
     TriggerEvent('rk9:cl:doTrackHuman')
 end, false)
 
@@ -173,6 +192,9 @@ end, false)
 -- ─── Exports for other client scripts ────────────────────────
 
 exports('RK9_IsLEO',        function() return RK9_IsLEO() end)
+exports('RK9_IsK9Unit',     function() return RK9_IsK9Unit() end)
+exports('RK9_IsHandler',    function() return RK9_IsHandler() end)
+exports('RK9_CanViewDogCerts', function() return RK9_CanViewDogCerts() end)
 exports('RK9_HasActiveCert', RK9_HasActiveCert)
 exports('RK9_GetMyCerts',   function() return RK9MyCerts end)
 exports('RK9_Notify',       RK9_Notify)
