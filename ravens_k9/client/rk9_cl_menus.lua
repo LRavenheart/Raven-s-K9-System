@@ -38,6 +38,8 @@ end
 function RK9_OpenMainMenu()
     local isEval  = lib.callback.await('rk9:cb:isEvaluator', false)
     local isAdmin = lib.callback.await('rk9:cb:isAdmin',     false)
+    local isK9    = exports['ravens_k9']:RK9_IsK9Unit()
+    local canView = exports['ravens_k9']:RK9_CanViewDogCerts()
 
     local opts = {
         {
@@ -48,16 +50,19 @@ function RK9_OpenMainMenu()
         {
             title       = '🔍  K9 Sniff — Person',
             description = 'Command the K9 to sniff a nearby person.',
+            disabled    = not isK9,
             onSelect    = function() TriggerEvent('rk9:cl:doSniffPed') end,
         },
         {
             title       = '🚗  K9 Sniff — Vehicle',
             description = 'Command the K9 to sniff a nearby vehicle.',
+            disabled    = not isK9,
             onSelect    = function() TriggerEvent('rk9:cl:doSniffVehicle') end,
         },
         {
             title       = '👣  Human Tracking',
             description = 'Track nearby or fleeing suspects (humantrack cert). Missing Person search requires Search and Rescue cert.',
+            disabled    = not isK9,
             onSelect    = function()
                 if not exports['ravens_k9']:RK9_HasActiveCert('humantrack') then
                     RK9_Notify('Human Tracking certification required.', 'error')
@@ -69,6 +74,7 @@ function RK9_OpenMainMenu()
         {
             title       = '📋  View Nearby K9 Certs',
             description = 'View the certifications of a nearby handler.',
+            disabled    = not canView,
             onSelect    = function()
                 local nearby = RK9_GetNearbyPlayers()
                 if #nearby == 0 then
