@@ -49,6 +49,8 @@ ravens_k9/
 | `oxmysql` | https://github.com/overextended/oxmysql |
 | `qb-core` | Standard QBCore installation |
 
+**Optional integration:** `ps-mdt` (if you want K9 alerts/calls pushed to MDT).
+
 ---
 
 ## Installation
@@ -62,6 +64,8 @@ ensure ox_lib
 ensure ox_target
 ensure oxmysql
 ensure qb-core
+# Optional, only if you want MDT call integration:
+# ensure ps-mdt
 ensure ravens_k9
 ```
 

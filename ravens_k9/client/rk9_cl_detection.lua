@@ -10,6 +10,15 @@
 
 local RK9ActionLocked = false   -- prevents overlapping actions
 local RK9TrackingActive = false -- tracks whether the tracking loop is running
+local RK9TrackEndsAt = nil      -- GetGameTimer() milliseconds when session should end
+local RK9TrackHudShown = false  -- tracks whether text ui is currently visible
+
+local function RK9_HideTrackHud()
+    if RK9TrackHudShown and lib.hideTextUI then
+        lib.hideTextUI()
+    end
+    RK9TrackHudShown = false
+end
 
 -- ─── Sniff animation + progress bar ──────────────────────────
 
@@ -321,6 +330,7 @@ function RK9_BeginTracking(targetServerId, mode)
         missing = '🐾 K9 is searching — missing person operation active.',
     }
     exports['ravens_k9']:RK9_Notify(startMessages[mode] or '🐾 Tracking started.', 'inform')
+    TriggerServerEvent('rk9:sv:mdtTrackStatus', mode, 'start')
 
     CreateThread(function()
         while RK9TrackingActive do
@@ -338,9 +348,12 @@ function RK9_BeginTracking(targetServerId, mode)
 
     -- Auto-expire the session after the mode-specific timeout
     local timeout = (RK9Config.TrackingTimeout and RK9Config.TrackingTimeout[mode]) or 600000
+    RK9TrackEndsAt = GetGameTimer() + timeout
     RK9TrackTimeout = SetTimeout(timeout, function()
         if RK9TrackingActive then
             RK9TrackingActive = false
+            RK9TrackEndsAt = nil
+            TriggerServerEvent('rk9:sv:mdtTrackStatus', mode, 'stop')
             local mins = math.floor(timeout / 60000)
             exports['ravens_k9']:RK9_Notify(
                 '🐾 Tracking session expired — ' .. mode .. ' mode limit (' .. mins .. ' min) reached.',
@@ -353,10 +366,16 @@ end
 -- Manually stop the active tracking session.
 RegisterNetEvent('rk9:cl:stopTracking', function()
     if RK9TrackingActive then
+        local endedMode = RK9TrackMode
         RK9TrackingActive = false
+        RK9TrackEndsAt = nil
         if RK9TrackTimeout then
             ClearTimeout(RK9TrackTimeout)
             RK9TrackTimeout = nil
+        end
+        RK9_HideTrackHud()
+        if endedMode then
+            TriggerServerEvent('rk9:sv:mdtTrackStatus', endedMode, 'stop')
         end
         -- The thread loop will exit on next iteration; timeout cleared above.
     else
@@ -380,4 +399,33 @@ RegisterNetEvent('rk9:cl:trackingUpdate', function(coords, mode)
 
     -- use exported helper from core
     RK9TrackBlip = exports['ravens_k9']:RK9_CreateBlip(coords, colour, label)
+end)
+
+-- Lightweight in-world tracking HUD (ox_lib text UI).
+-- This is intentionally minimal and non-blocking; it mirrors
+-- active mode + remaining time while server-side tracking runs.
+CreateThread(function()
+    while true do
+        if RK9TrackingActive and RK9TrackMode and RK9TrackEndsAt and lib.showTextUI then
+            local remainingMs = math.max(0, RK9TrackEndsAt - GetGameTimer())
+            local remainingMin = math.ceil(remainingMs / 60000)
+            local modeNames = {
+                nearby = 'Nearby Suspect',
+                fleeing = 'Fleeing Suspect',
+                missing = 'Missing Person',
+            }
+            local msg = string.format(
+                '🐾 K9 Tracking: %s | %d min left | /%s to stop',
+                modeNames[RK9TrackMode] or RK9TrackMode,
+                remainingMin,
+                RK9Config.Cmds.StopTrack
+            )
+            lib.showTextUI(msg, { position = 'right-center' })
+            RK9TrackHudShown = true
+            Wait(1000)
+        else
+            RK9_HideTrackHud()
+            Wait(500)
+        end
+    end
 end)

@@ -135,6 +135,26 @@ local function RK9_Notify(src, msg, ntype)
     TriggerClientEvent('rk9:cl:notify', src, msg, ntype or 'inform')
 end
 
+local function RK9_SendMdtCall(src, title, message, code)
+    if not RK9Config.PsMdtIntegration then return end
+    if GetResourceState('ps-mdt') ~= 'started' then return end
+
+    local ped = GetPlayerPed(src)
+    local coords = ped and ped > 0 and GetEntityCoords(ped) or vector3(0.0, 0.0, 0.0)
+    local payload = {
+        title = title,
+        message = message,
+        code = code or 'K9',
+        coords = { x = coords.x, y = coords.y, z = coords.z },
+        callsign = RK9Config.PsMdtCallSign or 'K9',
+    }
+
+    -- Support common ps-mdt integrations; calls are best-effort only.
+    -- Any integration failure should never interrupt core K9 gameplay.
+    pcall(function() exports['ps-mdt']:CreateCall(payload) end)
+    pcall(function() TriggerEvent('ps-mdt:server:CreateCall', payload) end)
+end
+
 -- ═══════════════════════════════════════════════════════════════
 --  Cert Retrieval Events
 -- ═══════════════════════════════════════════════════════════════
@@ -321,6 +341,13 @@ RegisterNetEvent('rk9:sv:sniffPed', function(targetServerId, certTypes)
     end
 
     TriggerClientEvent('rk9:cl:sniffResult', src, #found > 0, found)
+    if #found > 0 then
+        local targetCid = targetPlayer.PlayerData.citizenid or 'unknown'
+        RK9_SendMdtCall(src, 'K9 Positive Sniff (Person)',
+            string.format('Positive indication on subject CID: %s (%d item matches).', targetCid, #found),
+            'K9-ALERT'
+        )
+    end
 end)
 
 RegisterNetEvent('rk9:sv:sniffVehicle', function(vehiclePlate, certTypes)
@@ -351,6 +378,12 @@ RegisterNetEvent('rk9:sv:sniffVehicle', function(vehiclePlate, certTypes)
     end
 
     TriggerClientEvent('rk9:cl:sniffResult', src, #found > 0, found)
+    if #found > 0 then
+        RK9_SendMdtCall(src, 'K9 Positive Sniff (Vehicle)',
+            string.format('Positive indication on vehicle plate %s (%d item matches).', tostring(vehiclePlate), #found),
+            'K9-VEH'
+        )
+    end
 end)
 
 -- ═══════════════════════════════════════════════════════════════
@@ -436,6 +469,55 @@ RegisterNetEvent('rk9:sv:trackCoordsResponse', function(requesterSrc, coords, mo
     if coords and type(coords.x) == 'number' and type(coords.y) == 'number' and type(coords.z) == 'number' then
         TriggerClientEvent('rk9:cl:trackingUpdate', requesterId, coords, mode)
     end
+
+    pendingByResponder[requesterId] = nil
+    if next(pendingByResponder) == nil then
+        pendingTrackRequests[responderSrc] = nil
+    end
+
+    if coords and type(coords.x) == 'number' and type(coords.y) == 'number' and type(coords.z) == 'number' then
+        TriggerClientEvent('rk9:cl:trackingUpdate', requesterId, coords, mode)
+    end
+end)
+
+RegisterNetEvent('rk9:sv:mdtTrackStatus', function(mode, status)
+    local src = source
+    if not RK9_IsK9Unit(src) then return end
+
+    local validModes = { nearby = true, fleeing = true, missing = true }
+    if not validModes[mode] then return end
+    if status ~= 'start' and status ~= 'stop' then return end
+
+    if status == 'start' then
+        RK9_SendMdtCall(src, 'K9 Tracking Started',
+            string.format('K9 unit initiated %s tracking mode.', mode),
+            'K9-TRACK'
+        )
+    else
+        RK9_SendMdtCall(src, 'K9 Tracking Ended',
+            string.format('K9 unit ended %s tracking mode.', mode),
+            'K9-TRACK'
+        )
+    end
+end)
+
+-- Cleanup short-lived request/cooldown caches when players disconnect.
+AddEventHandler('playerDropped', function()
+    local src = source
+
+    -- Remove entries where this player was the responder.
+    pendingTrackRequests[src] = nil
+
+    -- Remove entries where this player was the requester.
+    for responderSrc, requesterMap in pairs(pendingTrackRequests) do
+        requesterMap[src] = nil
+        if next(requesterMap) == nil then
+            pendingTrackRequests[responderSrc] = nil
+        end
+    end
+
+    -- Remove cooldown entry for this player.
+    trackRequestCooldowns[src] = nil
 end)
 
 -- Cleanup short-lived request/cooldown caches when players disconnect.

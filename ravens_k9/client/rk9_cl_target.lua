@@ -2,7 +2,8 @@
 --  Raven's K9 System  |  rk9_cl_target.lua
 --  Author: Raven
 --  ox_target global entity hooks for players and vehicles.
---  All interactions are restricted to LEO jobs via `groups`.
+--  Baseline visibility is restricted to configured LEO jobs via `groups`.
+--  Fine-grained role/cert gates are enforced via canInteract helpers.
 --  Tracking mode access:
 --    Nearby / Fleeing — humantrack cert
 --    Missing Person   — humantrack + sar certs
@@ -31,7 +32,8 @@ CreateThread(function()
             end,
         },
 
-        -- View another player's K9 certs
+        -- View another player's K9 certs.
+        -- Allowed for active K9 units and Handler role users.
         {
             name     = 'rk9_target_view_certs',
             icon     = 'fas fa-id-card',
@@ -80,8 +82,9 @@ CreateThread(function()
             end,
         },
 
-        -- Begin human tracking on a player (humantrack cert required).
-        -- Missing Person mode additionally requires the SAR cert.
+        -- Begin human tracking on a player.
+        -- Requires active K9 unit + humantrack cert.
+        -- Missing Person mode additionally requires SAR cert.
         {
             name        = 'rk9_target_track_human',
             icon        = 'fas fa-shoe-prints',

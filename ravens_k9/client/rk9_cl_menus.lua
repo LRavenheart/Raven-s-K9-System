@@ -43,6 +43,18 @@ function RK9_OpenMainMenu()
 
     local opts = {
         {
+            title       = '🧭  Operations Console Status',
+            description = string.format('Role: %s  |  Active certs: %d', roleLabel, activeCount),
+            metadata    = {
+                { label = 'K9 Unit', value = isK9 and 'Yes' or 'No' },
+                { label = 'Handler', value = isHandler and 'Yes' or 'No' },
+                { label = 'Can View Certs', value = canView and 'Yes' or 'No' },
+                { label = 'Active Certifications', value = certText },
+            },
+            -- status card only; intentionally non-interactive
+            disabled    = true,
+        },
+        {
             title       = '🎖️  My Certifications',
             description = 'View your K9 certification cards and statuses.',
             onSelect    = RK9_OpenMyCertsMenu,
